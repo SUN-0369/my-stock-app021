@@ -13,33 +13,32 @@ SELECTED_JSON = os.path.join(current_dir, "selected_sectors.json")
 
 st.set_page_config(page_title="A股主力资金流向监控", layout="wide")
 
-# 优雅的暗黑/科技感视觉优化
+# 视觉效果极佳的暗黑/科技感优化（专为手机全屏适配）
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: #ffffff; }
     .stButton>button { 
-        padding: 6px 10px; font-size: 13px; border-radius: 4px; 
+        padding: 5px 8px; font-size: 12px; border-radius: 4px; 
         margin-bottom: 2px; text-align: left; width: 100%;
         background-color: #1a1c23; color: #ffffff; border: 1px solid #2d3139;
     }
     .stButton>button:hover { border-color: #ff4b4b; background-color: #262930; }
-    h4 { font-size: 1.2rem !important; font-weight: 600; margin-top: 15px; margin-bottom: 10px; color: #e0e0e0; }
-    div[data-testid="stMetricValue"] { font-size: 1.8rem !important; }
+    h4 { font-size: 1.1rem !important; font-weight: 600; margin-top: 12px; margin-bottom: 8px; color: #e0e0e0; }
+    div[data-testid="stMetricValue"] { font-size: 1.6rem !important; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     .block-container {
-        padding-top: 1rem !important;
-        padding-bottom: 1rem !important;
-        padding-left: 0.5rem !important;
-        padding-right: 0.5rem !important;
+        padding-top: 0.8rem !important;
+        padding-bottom: 0.8rem !important;
+        padding-left: 0.4rem !important;
+        padding-right: 0.4rem !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
 # --- 2. 工具函数：判断交易时间 ---
 def is_trading_time():
-    """判断当前是否为A股交易时间段（周一至周五 09:15-11:35, 12:55-15:05）"""
     now = datetime.now()
     if now.weekday() >= 5:  # 周六日
         return False
@@ -48,10 +47,9 @@ def is_trading_time():
         return True
     return False
 
-# --- 3. 核心 API 抓取引擎（带 st.cache_data 缓存优化避免封号） ---
+# --- 3. 核心 API 抓取引擎（极速精简版，单次仅请求前20条最核心数据） ---
 @st.cache_data(ttl=60)
 def get_secid(sector_name):
-    """根据板块名称模糊匹配 secid"""
     search_url = "https://searchapi.eastmoney.com/api/suggest/get"
     params = {"input": sector_name, "type": "14", "count": "1"}
     try:
@@ -63,9 +61,8 @@ def get_secid(sector_name):
         return None
     return None
 
-@st.cache_data(ttl=50)
+@st.cache_data(ttl=45)
 def fetch_history_flow(sector_name):
-    """抓取该板块今日 09:30 至今的所有分钟数据"""
     secid = get_secid(sector_name)
     if not secid: return pd.DataFrame()
     url = "https://push2.eastmoney.com/api/qt/stock/fflow/kline/get"
@@ -96,14 +93,15 @@ def fetch_current_list(is_concept=False, is_outflow=False):
     fs_code = "m:90+t:3" if is_concept else "m:90+t:2"
     po_code = "0" if is_outflow else "1"
     url = "https://push2.eastmoney.com/api/qt/clist/get"
+    # 【性能核心优化】：将页面数据大小 pz 从 100 缩减至 20，大幅减少网络传输延迟
     params = {
-        "pn": "1", "pz": "100", "po": po_code, "np": "1",
+        "pn": "1", "pz": "20", "po": po_code, "np": "1",
         "ut": "bd1d9ddb04089700cf9c27f6f7426281",
         "fltt": "2", "invt": "2", "fid": "f62", "fs": fs_code,
         "fields": "f12,f14,f62"
     }
     try:
-        r = requests.get(url, params=params, impersonate="chrome", timeout=5)
+        r = requests.get(url, params=params, impersonate="chrome", timeout=4)
         data = r.json().get('data', {}).get('diff', [])
         if not data: return pd.DataFrame(columns=['Sector', 'Amount'])
         df = pd.DataFrame(data)
@@ -129,20 +127,19 @@ all_current = pd.concat([ind_in, ind_out, con_in, con_out], ignore_index=True)
 all_names = sorted(all_current['Sector'].unique().tolist()) if not all_current.empty else []
 
 # --- 5. 顶栏指标看板 ---
-st.title("🚀 A股主力资金流向 - 全天分钟回溯")
+st.title("🚀 A股主力资金流向")
 colA, colB, colC = st.columns([2, 2, 3])
 with colA: 
     in_count = len(ind_in[ind_in['Amount'] > 0]) if not ind_in.empty else 0
-    st.metric("主力流入行业数", f"{in_count} 个", help="当前主力资金净流入为正的行业板块数量")
+    st.metric("主力流入行业数", f"{in_count} 个")
 with colB: 
     total_flow = ind_in['Amount'].sum() - ind_out['Amount'].abs().sum() if not ind_in.empty else 0.0
     st.metric("行业预计总合力", f"{total_flow:+.2f} 亿", delta_color="inverse")
 with colC: 
-    st.info(f"💡 自动刷新中 | 当前系统时间: {datetime.now().strftime('%H:%M:%S')}\n\n折线图末端直接标注了最新金额，可在左侧增减监控。")
+    st.info(f"💡 自动刷新中 | 当前时间: {datetime.now().strftime('%H:%M:%S')}")
 
-# --- 6. 核心：生成标准 A 股交易时间轴 ---
+# --- 6. 生成标准 A 股交易时间轴 ---
 def generate_stock_timeline():
-    """生成A股标准分钟级时间序列(共242个点)"""
     t_range = []
     for h in range(9, 16):
         for m in range(60):
@@ -175,22 +172,22 @@ for idx, s in enumerate(st.session_state.selected_sectors):
             x=s_data['Time'], y=s_data['Amount'],
             mode='lines+text', name=s,
             line=dict(width=2.5, color=c),
-            text=text_labels, textfont=dict(color=c, size=13),
+            text=text_labels, textfont=dict(color=c, size=12),
             textposition="middle right", cliponaxis=False
         ))
 
 fig.update_layout(
-    height=500, margin=dict(r=150, b=40, l=40, t=20), showlegend=False,
+    height=420, margin=dict(r=120, b=30, l=30, t=10), showlegend=False,
     plot_bgcolor='#131722', paper_bgcolor='#0e1117',
     xaxis=dict(
         type='category',
         tickmode='array',
-        tickvals=['09:30', '10:00', '10:30', '11:00', '11:30', '13:00', '13:30', '14:00', '14:30', '15:00'],
-        showgrid=True, gridcolor='#222632', tickangle=0, tickfont=dict(color='#8f929d')
+        tickvals=['09:30', '10:30', '11:30', '13:30', '14:30', '15:00'],
+        showgrid=True, gridcolor='#222632', tickangle=0, tickfont=dict(color='#8f929d', size=10)
     ),
     yaxis=dict(
         zeroline=True, zerolinecolor='#4f525e', zerolinewidth=1,
-        gridcolor='#222632', ticksuffix=" 亿", tickfont=dict(color='#8f929d')
+        gridcolor='#222632', ticksuffix=" 亿", tickfont=dict(color='#8f929d', size=10)
     ),
     hovermode="x unified"
 )
@@ -218,7 +215,7 @@ for i, (title, df, is_out) in enumerate(titles):
                 if st.button(btn_label, key=f"bd_{title}_{row['Sector']}"):
                     if row['Sector'] not in st.session_state.selected_sectors:
                         if len(st.session_state.selected_sectors) >= 8:
-                            st.toast("⚠️ 最多同时监控 8 个板块，请先删除一些", icon="⏳")
+                            st.toast("⚠️ 最多同时监控 8 个板块", icon="⏳")
                         else:
                             st.session_state.selected_sectors.append(row['Sector'])
                             with open(SELECTED_JSON, 'w', encoding='utf-8') as f:
@@ -228,7 +225,7 @@ for i, (title, df, is_out) in enumerate(titles):
             st.caption("暂无数据")
 
 # --- 9. 侧边栏交互与控制 ---
-st.sidebar.header("🔍 监控面板配置")
+st.sidebar.header("🔍 监控配置")
 
 selected = st.sidebar.selectbox(
     "搜索并添加板块/概念", 
@@ -246,7 +243,7 @@ if selected != "输入或选择..." and selected not in st.session_state.selecte
         st.rerun()
 
 st.sidebar.write("---")
-st.sidebar.subheader(f"📍 已监控板块 ({len(st.session_state.selected_sectors)}/8)")
+st.sidebar.subheader(f"📍 已监控 ({len(st.session_state.selected_sectors)}/8)")
 
 for s in list(st.session_state.selected_sectors):
     if st.sidebar.button(f"🗑️ {s}", key=f"del_{s}"):
